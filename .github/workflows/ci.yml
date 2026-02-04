@@ -23,7 +23,7 @@ jobs:
         include:
           - os: ubuntu-22.04
             artifact_suffix: linux-x64
-            arch: gcc_64
+            arch: linux_gcc_64
             sdk_asset: mpf-sdk-linux-x64.tar.gz
           - os: windows-latest
             artifact_suffix: windows-x64
