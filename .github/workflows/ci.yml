@@ -9,7 +9,6 @@ on:
 
 env:
   QT_VERSION: '6.8.3'
-  SDK_VERSION: 'latest'
 
 jobs:
   build:
@@ -18,10 +17,8 @@ jobs:
         include:
           - os: ubuntu-22.04
             artifact: mpf-http-client-linux-x64
-            sdk_artifact: mpf-sdk-linux-x64.tar.gz
           - os: windows-latest
             artifact: mpf-http-client-windows-x64
-            sdk_artifact: mpf-sdk-windows-x64.zip
 
     runs-on: ${{ matrix.os }}
 
@@ -34,35 +31,26 @@ jobs:
           version: ${{ env.QT_VERSION }}
           cache: true
 
-      - name: Download SDK
-        shell: bash
-        run: |
-          mkdir -p ${{ github.workspace }}/sdk
-          curl -L -o sdk-artifact.${{ matrix.sdk_artifact == '*.zip' && 'zip' || 'tar.gz' }} \
-            https://github.com/dyzdyz010/mpf-sdk/releases/${{ env.SDK_VERSION }}/download/${{ matrix.sdk_artifact }}
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            7z x sdk-artifact.zip -o${{ github.workspace }}/sdk
-          else
-            tar -xzf sdk-artifact.tar.gz -C ${{ github.workspace }}/sdk
-          fi
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev
 
       - name: Configure
-        run: |
-          cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="${{ github.workspace }}/sdk" \
-            -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/install
+        shell: bash
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/install"
 
       - name: Build
+        shell: bash
         run: cmake --build build
 
       - name: Install
+        shell: bash
         run: cmake --install build
 
       - name: Package
         shell: bash
         run: |
-          cd ${{ github.workspace }}/install
+          cd install
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             7z a -tzip ../${{ matrix.artifact }}.zip .
           else
@@ -73,7 +61,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.*
+          path: |
+            *.zip
+            *.tar.gz
 
   release:
     needs: build
@@ -81,15 +71,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
     steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/**/*
+          files: artifacts/*
           generate_release_notes: true
