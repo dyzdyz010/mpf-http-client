@@ -1,42 +1,137 @@
 name: CI
+
 on:
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+  repository_dispatch:
+    types: [sdk-released]
+
 env:
   QT_VERSION: '6.8.3'
+  SDK_VERSION: 'v1.0.0'  # Update when SDK version changes
+  COMPONENT_NAME: 'mpf-http-client'  # Will be replaced per repo
+
 jobs:
-  build-linux:
-    runs-on: ubuntu-22.04
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            artifact_suffix: linux-x64
+            arch: gcc_64
+            sdk_asset: mpf-sdk-linux-x64.tar.gz
+          - os: windows-latest
+            artifact_suffix: windows-x64
+            arch: mingw_64
+            sdk_asset: mpf-sdk-windows-x64.zip
+
+    runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
-      - uses: jurplel/install-qt-action@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
+          arch: ${{ matrix.arch }}
           cache: true
-      - run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libxkbcommon-dev
-      - run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$PWD/install
-      - run: cmake --build build
-      - run: cmake --install build
-      - run: cd install && tar -czvf ../mpf-http-client-linux-x64.tar.gz .
-      - uses: actions/upload-artifact@v4
+          tools: 'tools_mingw1310'
+
+      - name: Setup MinGW (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "$IQTA_TOOLS/mingw1310_64/bin" >> $GITHUB_PATH
+
+      - name: Install deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-dev
+
+      - name: Download SDK
+        shell: bash
+        run: |
+          mkdir -p deps/mpf-sdk
+          cd deps/mpf-sdk
+          gh release download ${{ env.SDK_VERSION }} -R dyzdyz010/mpf-sdk -p '${{ matrix.sdk_asset }}'
+          if [[ "${{ matrix.sdk_asset }}" == *.tar.gz ]]; then
+            tar -xzf ${{ matrix.sdk_asset }}
+          else
+            7z x ${{ matrix.sdk_asset }}
+          fi
+          rm -f ${{ matrix.sdk_asset }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=$PWD/install \
+            -DCMAKE_PREFIX_PATH="$PWD/deps/mpf-sdk"
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cmake -B build -G "MinGW Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/install" \
+            -DCMAKE_PREFIX_PATH="$PWD/deps/mpf-sdk"
+
+      - name: Build
+        shell: bash
+        run: cmake --build build
+
+      - name: Install
+        shell: bash
+        run: cmake --install build
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: cd install && tar -czvf ../${{ env.COMPONENT_NAME }}-${{ matrix.artifact_suffix }}.tar.gz .
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cd install && 7z a -tzip ../${{ env.COMPONENT_NAME }}-${{ matrix.artifact_suffix }}.zip .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: mpf-http-client-linux-x64
-          path: mpf-http-client-linux-x64.tar.gz
+          name: ${{ env.COMPONENT_NAME }}-${{ matrix.artifact_suffix }}
+          path: ${{ env.COMPONENT_NAME }}-${{ matrix.artifact_suffix }}.*
+
   release:
-    needs: build-linux
+    needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    
     steps:
-      - uses: actions/download-artifact@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
-      - uses: softprops/action-gh-release@v1
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
         with:
           files: artifacts/*
           generate_release_notes: true
+
+      - name: Trigger downstream builds
+        if: success()
+        run: |
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.DISPATCH_TOKEN }}" \
+            https://api.github.com/repos/dyzdyz010/mpf-host/dispatches \
+            -d '{"event_type":"component-released","client_payload":{"component":"${{ env.COMPONENT_NAME }}","version":"${{ github.ref_name }}"}}'
