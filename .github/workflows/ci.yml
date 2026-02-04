@@ -27,7 +27,7 @@ jobs:
             sdk_asset: mpf-sdk-linux-x64.tar.gz
           - os: windows-latest
             artifact_suffix: windows-x64
-            arch: mingw_64
+            arch: win64_mingw
             sdk_asset: mpf-sdk-windows-x64.zip
 
     runs-on: ${{ matrix.os }}
@@ -41,12 +41,7 @@ jobs:
           version: ${{ env.QT_VERSION }}
           arch: ${{ matrix.arch }}
           cache: true
-          tools: 'tools_mingw1310'
 
-      - name: Setup MinGW (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: echo "$IQTA_TOOLS/mingw1310_64/bin" >> $GITHUB_PATH
 
       - name: Install deps (Linux)
         if: runner.os == 'Linux'
