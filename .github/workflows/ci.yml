@@ -12,7 +12,7 @@ on:
 
 env:
   QT_VERSION: '6.8.3'
-  SDK_VERSION: 'v1.0.1'  # Update when SDK version changes
+  SDK_VERSION: 'v1.0.2'  # Update when SDK version changes
   COMPONENT_NAME: 'mpf-http-client'  # Will be replaced per repo
 
 jobs:
