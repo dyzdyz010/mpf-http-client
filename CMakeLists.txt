@@ -28,6 +28,11 @@ target_link_libraries(mpf-http-client
 
 target_compile_definitions(mpf-http-client PRIVATE MPF_HTTP_CLIENT_EXPORTS)
 
+# Static link CRT on MinGW to avoid cross-DLL heap issues
+if(MINGW)
+    target_link_options(mpf-http-client PRIVATE -static-libgcc -static-libstdc++)
+endif()
+
 # Install + package config
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
