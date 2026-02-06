@@ -12,20 +12,33 @@ on:
         description: 'SDK version (empty=latest)'
         required: false
         default: ''
-      force_latest:
-        description: 'Force use latest dependencies'
-        type: boolean
-        default: false
-  repository_dispatch:
-    types: [sdk-released]
 
 env:
   QT_VERSION: '6.8.3'
-  SDK_VERSION: ${{ github.event.inputs.sdk_version || github.event.client_payload.sdk_version || 'v1.0.2' }}  # Update when SDK version changes
-  COMPONENT_NAME: 'mpf-http-client'  # Will be replaced per repo
+  COMPONENT_NAME: 'mpf-http-client'
 
 jobs:
+  resolve-versions:
+    runs-on: ubuntu-latest
+    outputs:
+      sdk_version: ${{ steps.resolve.outputs.sdk_version }}
+    steps:
+      - name: Resolve dependency versions
+        id: resolve
+        run: |
+          # Use input if provided, otherwise get latest
+          if [[ -n "${{ github.event.inputs.sdk_version }}" ]]; then
+            SDK_VERSION="${{ github.event.inputs.sdk_version }}"
+          else
+            SDK_VERSION=$(gh release view -R dyzdyz010/mpf-sdk --json tagName -q '.tagName')
+          fi
+          echo "sdk_version=$SDK_VERSION" >> $GITHUB_OUTPUT
+          echo "Using SDK: $SDK_VERSION"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   build:
+    needs: resolve-versions
     strategy:
       fail-fast: false
       matrix:
@@ -33,11 +46,11 @@ jobs:
           - os: ubuntu-22.04
             artifact_suffix: linux-x64
             arch: linux_gcc_64
-            sdk_asset: mpf-sdk-linux-x64.tar.gz
+            ext: tar.gz
           - os: windows-latest
             artifact_suffix: windows-x64
             arch: win64_mingw
-            sdk_asset: mpf-sdk-windows-x64.zip
+            ext: zip
 
     runs-on: ${{ matrix.os }}
 
@@ -59,7 +72,6 @@ jobs:
         shell: bash
         run: echo "$IQTA_TOOLS/mingw1310_64/bin" >> $GITHUB_PATH
 
-
       - name: Install deps (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-dev
@@ -67,15 +79,12 @@ jobs:
       - name: Download SDK
         shell: bash
         run: |
-          mkdir -p deps/mpf-sdk
-          cd deps/mpf-sdk
-          gh release download ${{ env.SDK_VERSION }} -R dyzdyz010/mpf-sdk -p '${{ matrix.sdk_asset }}'
-          if [[ "${{ matrix.sdk_asset }}" == *.tar.gz ]]; then
-            tar -xzf ${{ matrix.sdk_asset }}
-          else
-            7z x ${{ matrix.sdk_asset }}
-          fi
-          rm -f ${{ matrix.sdk_asset }}
+          mkdir -p deps/mpf-sdk && cd deps/mpf-sdk
+          gh release download ${{ needs.resolve-versions.outputs.sdk_version }} \
+            -R dyzdyz010/mpf-sdk \
+            -p "mpf-sdk-${{ matrix.artifact_suffix }}.${{ matrix.ext }}"
+          [[ "${{ matrix.ext }}" == "tar.gz" ]] && tar -xzf *.tar.gz || 7z x *.zip
+          rm -f *.${{ matrix.ext }}
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -139,11 +148,16 @@ jobs:
           files: artifacts/*
           generate_release_notes: true
 
-      - name: Trigger downstream builds
-        if: success()
+  # Cascade: http-client -> plugin-orders
+  trigger-downstream:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger plugin-orders
         run: |
-          curl -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.DISPATCH_TOKEN }}" \
-            https://api.github.com/repos/dyzdyz010/mpf-host/dispatches \
-            -d '{"event_type":"component-released","client_payload":{"component":"${{ env.COMPONENT_NAME }}","version":"${{ github.ref_name }}"}}'
+          VERSION="${GITHUB_REF_NAME}"
+          echo "Triggering plugin-orders with http-client version: $VERSION"
+          gh workflow run ci.yml -R dyzdyz010/mpf-plugin-orders -f http_client_version=$VERSION
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
