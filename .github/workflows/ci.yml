@@ -7,12 +7,21 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      sdk_version:
+        description: 'SDK version (empty=latest)'
+        required: false
+        default: ''
+      force_latest:
+        description: 'Force use latest dependencies'
+        type: boolean
+        default: false
   repository_dispatch:
     types: [sdk-released]
 
 env:
   QT_VERSION: '6.8.3'
-  SDK_VERSION: 'v1.0.2'  # Update when SDK version changes
+  SDK_VERSION: ${{ github.event.inputs.sdk_version || github.event.client_payload.sdk_version || 'v1.0.2' }}  # Update when SDK version changes
   COMPONENT_NAME: 'mpf-http-client'  # Will be replaced per repo
 
 jobs:
